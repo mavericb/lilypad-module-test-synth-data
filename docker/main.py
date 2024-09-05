@@ -101,33 +101,30 @@ def setup_model_and_tokenizer(model_name: str):
 
 def setup_training_config(output_dir: str):
     peft_config = LoraConfig(
-        lora_alpha=32,
-        lora_dropout=0.05,
-        r=16,
+        lora_alpha=16,
+        lora_dropout=0.1,
+        r=64,
         bias="none",
         task_type="CAUSAL_LM",
     )
 
     training_arguments = TrainingArguments(
         output_dir=output_dir,
-        num_train_epochs=3,
-        per_device_train_batch_size=2,
-        gradient_accumulation_steps=4,
-        optim="adamw_torch",
-        save_steps=100,
-        logging_steps=10,
-        learning_rate=1e-4,
-        weight_decay=0.01,
-        fp16=True,
+        num_train_epochs=1,
+        per_device_train_batch_size=4,
+        gradient_accumulation_steps=1,
+        optim="paged_adamw_32bit",
+        save_steps=25,
+        logging_steps=25,
+        learning_rate=2e-4,
+        weight_decay=0.001,
+        fp16=False,
         bf16=False,
         max_grad_norm=0.3,
         max_steps=-1,
-        warmup_ratio=0.05,
+        warmup_ratio=0.03,
         group_by_length=True,
-        lr_scheduler_type="cosine",
-        evaluation_strategy="steps",
-        eval_steps=100,
-        load_best_model_at_end=True,
+        lr_scheduler_type="constant",
     )
 
     return peft_config, training_arguments
@@ -140,7 +137,7 @@ def finetune_model(model, dataset, peft_config, training_arguments, tokenizer):
             train_dataset=dataset,
             peft_config=peft_config,
             dataset_text_field="text",
-            max_seq_length=512,
+            max_seq_length=None,
             tokenizer=tokenizer,
             args=training_arguments,
             packing=False,
@@ -197,13 +194,8 @@ def main():
     contract_examples = load_contract_examples(contracts_path)
     dataset = SolidityDataset(contract_examples, tokenizer)
 
-    # Split dataset into train and validation
-    train_size = int(0.9 * len(dataset))
-    val_size = len(dataset) - train_size
-    train_dataset, val_dataset = torch.utils.data.random_split(dataset, [train_size, val_size])
-
     # Fine-tune the model
-    finetuned_model = finetune_model(model, train_dataset, peft_config, training_arguments, tokenizer)
+    finetuned_model = finetune_model(model, dataset, peft_config, training_arguments, tokenizer)
 
     # Generate contracts using the fine-tuned model
     valid_contracts = generate_contracts(finetuned_model, tokenizer, contract_examples, num_contracts)
