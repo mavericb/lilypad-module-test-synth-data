@@ -1,4 +1,4 @@
-# Ollama fine tuned Synthetic Data Generator
+# LLama fine tuned Synthetic Data Generator
 
 
 ```
