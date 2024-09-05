@@ -4,7 +4,11 @@ import torch
 from torch.utils.data import Dataset
 from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig, Trainer, TrainingArguments
 from solcx import compile_source, install_solc, set_solc_version
-import re #OK
+import re
+from peft import LoraConfig, PeftModel
+from trl import SFTTrainer
+
+print("main.py started")
 
 # Install Solidity compiler  #OK
 print("Installing Solidity compiler...")
@@ -21,33 +25,13 @@ print(f"Environment Variables - SEED: {seed}, NUM_CONTRACTS: {num_contracts}, TO
 random.seed(seed)
 torch.manual_seed(seed)
 
-import os #OK
-import torch
-from datasets import load_from_disk
-from transformers import (
-    AutoModelForCausalLM,
-    AutoTokenizer,
-    BitsAndBytesConfig,
-    TrainingArguments,
-    pipeline,
-    logging,
-)
-from peft import LoraConfig, PeftModel
-from trl import SFTTrainer
-
-print("main.py started")
-
 input = os.environ.get("INPUT") or "question mark floating in space"
 print(f"Input: {input}")
 
 # Use local paths for model and dataset
 model_name = "/app/model"
-dataset_path = "/app/dataset"
-new_model = "llama-3-8b-synth-data" #OK
-
-# Use local paths for model and dataset
-# model_name = "/app/model"
 contracts_path = "/app/dataset/contracts"  # Directory where ERC-20 contracts are stored
+new_model = "llama-3-8b-synth-data" #OK
 
 print(f"Using model path: {model_name}")
 print(f"Using contract path: {contracts_path}")
