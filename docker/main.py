@@ -5,7 +5,7 @@ from torch.utils.data import Dataset
 from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig, TrainingArguments
 from solcx import compile_source, install_solc, set_solc_version
 import re
-from peft import LoraConfig
+from peft import LoraConfig, PeftModel
 from trl import SFTTrainer
 from typing import List, Tuple
 import logging
@@ -70,20 +70,6 @@ def validate_contract(contract_code: str) -> Tuple[bool, str]:
     except Exception as e:
         logger.error(f"Contract validation failed: {e}")
         return False, str(e)
-
-def categorize_error(error_message: str) -> str:
-    if "pragma" in error_message or "import" in error_message:
-        return "pragma_or_import_issue"
-    elif "primary expression" in error_message or re.search(r'!+', error_message):
-        return "syntax_noise"
-    return "general_error"
-
-def basic_syntax_check(contract_code: str) -> bool:
-    if re.search(r'!{5,}', contract_code):
-        return False
-    if re.search(r'/\*\*[^*]*$', contract_code):
-        return False
-    return True
 
 def setup_model_and_tokenizer(model_name: str):
     logger.info("Loading model and tokenizer...")
@@ -154,23 +140,18 @@ def finetune_model(model, dataset, peft_config, training_arguments, tokenizer):
         )
         trainer.train()
         logger.info("Fine-tuning completed successfully")
+        return trainer.model
     except Exception as e:
         logger.error(f"Error during fine-tuning: {e}")
         raise
-    return model
 
-def generate_contracts(model, tokenizer, contract_examples, num_contracts, peft_config, training_arguments):
+def generate_contracts(model, tokenizer, contract_examples, num_contracts):
     valid_contracts = []
-    error_feedback = []
 
     while len(valid_contracts) < num_contracts:
         logger.info(f"Generating contract {len(valid_contracts) + 1}/{num_contracts}...")
         prompt = random.choice(contract_examples)[:512]
         synthetic_contract = generate_synthetic_contract(model, tokenizer, prompt)
-
-        if not basic_syntax_check(synthetic_contract):
-            logger.info("Contract skipped due to obvious syntax issues.")
-            continue
 
         is_valid, error_message = validate_contract(synthetic_contract)
 
@@ -178,17 +159,7 @@ def generate_contracts(model, tokenizer, contract_examples, num_contracts, peft_
             valid_contracts.append(synthetic_contract)
             logger.info(f"Contract {len(valid_contracts)} is valid.")
         else:
-            error_type = categorize_error(error_message)
-            error_feedback.append((error_type, synthetic_contract))
             logger.info(f"Contract is invalid. Error: {error_message}")
-
-            if error_type == "syntax_noise":
-                logger.info("Skipping fine-tuning due to noise (syntax).")
-                continue
-
-            if len(error_feedback) > 0:
-                feedback_contracts = [entry[1] for entry in error_feedback if entry[0] == error_type]
-                model = finetune_model(model, SolidityDataset(feedback_contracts, tokenizer), peft_config, training_arguments, tokenizer)
 
     return valid_contracts
 
@@ -219,10 +190,17 @@ def main():
     contract_examples = load_contract_examples(contracts_path)
     dataset = SolidityDataset(contract_examples, tokenizer)
 
-    # Generate contracts
-    valid_contracts = generate_contracts(model, tokenizer, contract_examples, num_contracts, peft_config, training_arguments)
+    # Fine-tune the model
+    finetuned_model = finetune_model(model, dataset, peft_config, training_arguments, tokenizer)
+
+    # Generate contracts using the fine-tuned model
+    valid_contracts = generate_contracts(finetuned_model, tokenizer, contract_examples, num_contracts)
 
     logger.info(f"Generated {len(valid_contracts)} valid contracts.")
+
+    # Optional: Save the fine-tuned model
+    finetuned_model.save_pretrained(os.path.join(output_dir, "finetuned_model"))
+    tokenizer.save_pretrained(os.path.join(output_dir, "finetuned_model"))
 
 if __name__ == "__main__":
     main()
