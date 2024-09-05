@@ -1,4 +1,4 @@
-# README: Running the Synthetic Data Generation Module
+# Running the Synthetic Data Generation Module
 
 This guide provides instructions for setting up, testing, and running the synthetic data generation module on Lilypad.
 
@@ -81,22 +81,24 @@ Run each of these commands in a separate terminal window or tab, in the order li
 # Terminal 1
 ./stack chain-clean
 ./stack chain
-./stack chain-boot
 
 # Terminal 2
-ipfs daemon
+./stack chain-boot
 
 # Terminal 3
-./stack solver
+ipfs daemon
 
 # Terminal 4
-./stack job-creator
+./stack solver
 
 # Terminal 5
+./stack job-creator
+
+# Terminal 6
 rm -rf /home/lily/.bacalhau
 ./stack bacalhau-node
 
-# Terminal 6
+# Terminal 7
 ./stack resource-provider --offer-gpu 1
 ```
 
