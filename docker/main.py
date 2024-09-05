@@ -110,6 +110,33 @@ class SolidityDataset(Dataset):
         }
 
 # Fine-tune the model using the loaded contracts
+# def finetune_model(model, tokenizer, contract_examples):
+#     print("Preparing the dataset for fine-tuning...")
+#     dataset = SolidityDataset(contract_examples, tokenizer)
+#
+#     print("Starting the fine-tuning process...")
+#     training_args = TrainingArguments(
+#         output_dir="/app/results",
+#         num_train_epochs=1,
+#         per_device_train_batch_size=1,  # Keep batch size low for memory efficiency
+#         gradient_accumulation_steps=4,  # Adjust this to maintain effective batch size
+#         save_strategy="no",  # Disable saving during training
+#         logging_dir="/app/logs",
+#         logging_steps=10,
+#         optim="adamw_torch",
+#     )
+#
+#     trainer = Trainer(
+#         model=model,
+#         args=training_args,
+#         train_dataset=dataset,
+#         tokenizer=tokenizer,
+#     )
+#
+#     trainer.train()
+#     print("Fine-tuning completed.")
+#     return model
+
 def finetune_model(model, tokenizer, contract_examples):
     print("Preparing the dataset for fine-tuning...")
     dataset = SolidityDataset(contract_examples, tokenizer)
@@ -118,12 +145,15 @@ def finetune_model(model, tokenizer, contract_examples):
     training_args = TrainingArguments(
         output_dir="/app/results",
         num_train_epochs=1,
-        per_device_train_batch_size=1,  # Keep batch size low for memory efficiency
-        gradient_accumulation_steps=4,  # Adjust this to maintain effective batch size
-        save_strategy="no",  # Disable saving during training
+        per_device_train_batch_size=1,
+        gradient_accumulation_steps=8,  # Increased from 4
+        save_strategy="no",
         logging_dir="/app/logs",
         logging_steps=10,
         optim="adamw_torch",
+        fp16=True,  # Enable mixed precision training
+        dataloader_num_workers=0,  # Disable multi-processing for data loading
+        max_grad_norm=0.5,  # Gradient clipping
     )
 
     trainer = Trainer(
@@ -133,8 +163,16 @@ def finetune_model(model, tokenizer, contract_examples):
         tokenizer=tokenizer,
     )
 
-    trainer.train()
-    print("Fine-tuning completed.")
+    try:
+        trainer.train()
+        print("Fine-tuning completed.")
+    except RuntimeError as e:
+        print(f"An error occurred during training: {e}")
+        print("Attempting to free up memory and continue...")
+        import gc
+        gc.collect()
+        torch.cuda.empty_cache()
+
     return model
 
 # Function to generate synthetic smart contract
