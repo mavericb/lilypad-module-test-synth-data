@@ -85,26 +85,7 @@ def basic_syntax_check(contract_code: str) -> bool:
         return False
     return True
 
-def main():
-    logger.info("Smart Contract Generator started")
-
-    # Environment setup
-    install_solc(version="0.8.20")
-    seed = int(os.environ.get("SEED", 42))
-    num_contracts = int(os.environ.get("NUM_CONTRACTS", 1))
-    token_standard = os.environ.get("TOKEN_STANDARD", "ERC-20")
-
-    logger.info(f"Environment Variables - SEED: {seed}, NUM_CONTRACTS: {num_contracts}, TOKEN_STANDARD: {token_standard}")
-
-    random.seed(seed)
-    torch.manual_seed(seed)
-
-    # Paths and configurations
-    model_name = "/app/model"
-    contracts_path = "/app/dataset/contracts"
-    output_dir = "/app/results"
-
-    # Load model and tokenizer
+def setup_model_and_tokenizer(model_name: str):
     logger.info("Loading model and tokenizer...")
     bnb_config = BitsAndBytesConfig(
         load_in_4bit=True,
@@ -126,11 +107,9 @@ def main():
     tokenizer.pad_token = tokenizer.eos_token
     tokenizer.padding_side = "right"
 
-    # Load dataset
-    contract_examples = load_contract_examples(contracts_path)
-    dataset = SolidityDataset(contract_examples, tokenizer)
+    return model, tokenizer
 
-    # Training configurations
+def setup_training_config(output_dir: str):
     peft_config = LoraConfig(
         lora_alpha=16,
         lora_dropout=0.1,
@@ -158,28 +137,29 @@ def main():
         lr_scheduler_type="constant",
     )
 
-    # Fine-tuning function
-    def finetune_model(model, dataset):
-        logger.info("Starting the fine-tuning process...")
-        try:
-            trainer = SFTTrainer(
-                model=model,
-                train_dataset=dataset,
-                peft_config=peft_config,
-                dataset_text_field="text",
-                max_seq_length=None,
-                tokenizer=tokenizer,
-                args=training_arguments,
-                packing=False,
-            )
-            trainer.train()
-            logger.info("Fine-tuning completed successfully")
-        except Exception as e:
-            logger.error(f"Error during fine-tuning: {e}")
-            raise
-        return model
+    return peft_config, training_arguments
 
-    # Generate contracts
+def finetune_model(model, dataset, peft_config, training_arguments, tokenizer):
+    logger.info("Starting the fine-tuning process...")
+    try:
+        trainer = SFTTrainer(
+            model=model,
+            train_dataset=dataset,
+            peft_config=peft_config,
+            dataset_text_field="text",
+            max_seq_length=None,
+            tokenizer=tokenizer,
+            args=training_arguments,
+            packing=False,
+        )
+        trainer.train()
+        logger.info("Fine-tuning completed successfully")
+    except Exception as e:
+        logger.error(f"Error during fine-tuning: {e}")
+        raise
+    return model
+
+def generate_contracts(model, tokenizer, contract_examples, num_contracts, peft_config, training_arguments):
     valid_contracts = []
     error_feedback = []
 
@@ -208,7 +188,39 @@ def main():
 
             if len(error_feedback) > 0:
                 feedback_contracts = [entry[1] for entry in error_feedback if entry[0] == error_type]
-                model = finetune_model(model, SolidityDataset(feedback_contracts, tokenizer))
+                model = finetune_model(model, SolidityDataset(feedback_contracts, tokenizer), peft_config, training_arguments, tokenizer)
+
+    return valid_contracts
+
+def main():
+    logger.info("Smart Contract Generator started")
+
+    # Environment setup
+    install_solc(version="0.8.20")
+    seed = int(os.environ.get("SEED", 42))
+    num_contracts = int(os.environ.get("NUM_CONTRACTS", 1))
+    token_standard = os.environ.get("TOKEN_STANDARD", "ERC-20")
+
+    logger.info(f"Environment Variables - SEED: {seed}, NUM_CONTRACTS: {num_contracts}, TOKEN_STANDARD: {token_standard}")
+
+    random.seed(seed)
+    torch.manual_seed(seed)
+
+    # Paths and configurations
+    model_name = "/app/model"
+    contracts_path = "/app/dataset/contracts"
+    output_dir = "/app/results"
+
+    # Setup model, tokenizer, and configurations
+    model, tokenizer = setup_model_and_tokenizer(model_name)
+    peft_config, training_arguments = setup_training_config(output_dir)
+
+    # Load dataset
+    contract_examples = load_contract_examples(contracts_path)
+    dataset = SolidityDataset(contract_examples, tokenizer)
+
+    # Generate contracts
+    valid_contracts = generate_contracts(model, tokenizer, contract_examples, num_contracts, peft_config, training_arguments)
 
     logger.info(f"Generated {len(valid_contracts)} valid contracts.")
 
