@@ -52,11 +52,15 @@ class SolidityDataset(Dataset):
         tokenized["labels"] = tokenized["input_ids"].clone()
         return {k: v.squeeze() for k, v in tokenized.items()}
 
+
 def generate_synthetic_contract(model, tokenizer, prompt: str, max_length: int = 512) -> str:
     logger.info("Generating synthetic contract...")
-    device = model.device
-    inputs = tokenizer(prompt, return_tensors="pt").input_ids.to(device)
-    outputs = model.generate(inputs, max_length=max_length, num_return_sequences=1)
+    device = next(model.parameters()).device  # Get the device of the model
+    inputs = tokenizer(prompt, return_tensors="pt").to(device)
+
+    with torch.no_grad():
+        outputs = model.generate(**inputs, max_length=max_length, num_return_sequences=1)
+
     synthetic_contract = tokenizer.decode(outputs[0], skip_special_tokens=True)
     return add_pragma_and_imports(synthetic_contract)
 
