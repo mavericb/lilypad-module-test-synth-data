@@ -27,7 +27,8 @@ RUN curl -L -o contracts.zip https://github.com/Lilypad-Tech/lilypad-module-synt
     rm contracts.zip
 
 # Download model
-RUN python3 -c "from huggingface_hub import snapshot_download; snapshot_download(repo_id='xiaodongguaAIGC/llama-3-debug', local_dir='/app/model')"
+#RUN python3 -c "from huggingface_hub import snapshot_download; snapshot_download(repo_id='xiaodongguaAIGC/llama-3-debug', local_dir='/app/model')" #debug model
+RUN python3 -c "from huggingface_hub import snapshot_download; snapshot_download(repo_id='NousResearch/Meta-Llama-3-8B-Instruct', local_dir='/app/model')"
 
 # Copy application files
 COPY Dockerfile /app/Dockerfile
