@@ -79,6 +79,9 @@ Run each of these commands in a separate terminal window or tab, in the order li
 
 ```bash
 # Terminal 1
+git clone https://github.com/Lilypad-Tech/lilypad.git
+cd lilypad
+
 ./stack chain-clean
 ./stack chain
 
@@ -103,6 +106,8 @@ rm -rf /home/lily/.bacalhau
 ```
 
 Keep all terminals open as these processes need to run concurrently for the local testnet to function properly.
+
+More info: https://github.com/Lilypad-Tech/lilypad/blob/main/LOCAL_DEVELOPMENT.md
 
 ### Verify Local Testnet
 
