@@ -8,6 +8,69 @@ import re
 from peft import LoraConfig, PeftModel
 from trl import SFTTrainer
 
+# Function to load Solidity contracts from the directory
+def load_contract_examples(path_to_contracts: str):
+    print("Loading contract examples from:", path_to_contracts)
+    contract_texts = []
+    for filename in os.listdir(path_to_contracts):
+        if filename.endswith(".sol"):  # Only load Solidity files
+            with open(os.path.join(path_to_contracts, filename), 'r') as file:
+                contract_text = file.read()
+                contract_texts.append(contract_text)
+    print(f"Loaded {len(contract_texts)} contracts from {path_to_contracts}")
+    return contract_texts
+
+# Function to clean and add necessary pragma and imports
+def add_pragma_and_imports(synthetic_contract):
+    pragma_statement = "// SPDX-License-Identifier: MIT\npragma solidity ^0.8.20;\n\n"
+    if not synthetic_contract.startswith("pragma solidity"):
+        synthetic_contract = pragma_statement + synthetic_contract
+
+    # Clean up unnecessary or incomplete comment blocks (e.g., /** ... */)
+    synthetic_contract = re.sub(r'/\*\*.*?\*/', '', synthetic_contract, flags=re.DOTALL)
+
+    return synthetic_contract
+
+# Function to generate synthetic smart contract
+def generate_synthetic_contract(model, tokenizer, prompt, max_length=512):
+    print("Generating synthetic contract...")
+    device = model.device  # Get the device the model is using (GPU or CPU)
+    inputs = tokenizer(prompt, return_tensors="pt").input_ids.to(device)
+    outputs = model.generate(inputs, max_length=max_length, num_return_sequences=1)
+    synthetic_contract = tokenizer.decode(outputs[0], skip_special_tokens=True)
+    return add_pragma_and_imports(synthetic_contract)
+
+# Function to validate smart contract using py-solc-x
+def validate_contract(contract_code: str):
+    print("Validating contract...")
+    try:
+        set_solc_version('0.8.20')
+        compiled_sol = compile_source(contract_code, output_values=["abi", "bin"])
+        print("Contract validation successful.")
+        return True, None
+    except Exception as e:
+        print(f"Contract validation failed: {e}")
+        return False, str(e)
+
+# Function to categorize errors for targeted fine-tuning
+def categorize_error(error_message):
+    if "pragma" in error_message or "import" in error_message:
+        return "pragma_or_import_issue"
+    elif "primary expression" in error_message or re.search(r'!+', error_message):
+        return "syntax_noise"  # Handling invalid characters like '!'
+    return "general_error"
+
+# Function to perform basic syntactical cleaning
+def basic_syntax_check(contract_code):
+    # Allow more flexibility: only reject contracts with extreme issues like excessive repeated characters
+    if re.search(r'!{5,}', contract_code):  # Check if there are more than 5 consecutive '!'
+        return False
+    # Ensure there is no hanging multi-line comment
+    if re.search(r'/\*\*[^*]*$', contract_code):  # Incomplete comment block
+        return False
+    return True
+
+
 print("main.py started")
 
 # Install Solidity compiler  #OK
@@ -72,31 +135,6 @@ max_seq_length = None
 packing = False
 device_map = {"": 0}
 
-##
-
-
-# Function to load Solidity contracts from the directory
-def load_contract_examples(path_to_contracts: str):
-    print("Loading contract examples from:", path_to_contracts)
-    contract_texts = []
-    for filename in os.listdir(path_to_contracts):
-        if filename.endswith(".sol"):  # Only load Solidity files
-            with open(os.path.join(path_to_contracts, filename), 'r') as file:
-                contract_text = file.read()
-                contract_texts.append(contract_text)
-    print(f"Loaded {len(contract_texts)} contracts from {path_to_contracts}")
-    return contract_texts
-
-# Function to clean and add necessary pragma and imports
-def add_pragma_and_imports(synthetic_contract):
-    pragma_statement = "// SPDX-License-Identifier: MIT\npragma solidity ^0.8.20;\n\n"
-    if not synthetic_contract.startswith("pragma solidity"):
-        synthetic_contract = pragma_statement + synthetic_contract
-
-    # Clean up unnecessary or incomplete comment blocks (e.g., /** ... */)
-    synthetic_contract = re.sub(r'/\*\*.*?\*/', '', synthetic_contract, flags=re.DOTALL)
-
-    return synthetic_contract
 
 # Create a custom dataset for fine-tuning
 class SolidityDataset(Dataset):
@@ -183,39 +221,12 @@ contract_examples = load_contract_examples(contracts_path)
 
 try:
     dataset = SolidityDataset(contract_examples, tokenizer)
-    print(f"Dataset loaded successfully from {dataset_path}")
+    print(f"Dataset loaded successfully from {contracts_path}")
     print(f"Dataset info: {dataset}")
 except Exception as e:
     print(f"Error loading dataset: {e}")
     raise
 
-# HERE
-# # Load model and tokenizer
-# print("Loading model and tokenizer...")
-# compute_dtype = getattr(torch, bnb_4bit_compute_dtype)
-# bnb_config = BitsAndBytesConfig(
-#     load_in_4bit=use_4bit,
-#     bnb_4bit_quant_type=bnb_4bit_quant_type,
-#     bnb_4bit_compute_dtype=compute_dtype,
-#     bnb_4bit_use_double_quant=use_nested_quant,
-# )
-#
-# model = AutoModelForCausalLM.from_pretrained(
-#     model_name,
-#     quantization_config=bnb_config,
-#     device_map={"": 0},
-#     trust_remote_code=True,
-# )
-# model.config.use_cache = False
-#
-# tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True)
-# tokenizer.add_special_tokens({'pad_token': '[PAD]'})
-# tokenizer.pad_token = tokenizer.eos_token
-# tokenizer.padding_side = "right"
-#
-# print("Model and tokenizer loaded successfully.")
-
-# HERE
 
 # Fine-tune the model using the loaded contracts
 def finetune_model(model, tokenizer, contract_examples):
@@ -223,26 +234,7 @@ def finetune_model(model, tokenizer, contract_examples):
     dataset = SolidityDataset(contract_examples, tokenizer)
 
     print("Starting the fine-tuning process...")
-    # training_args = TrainingArguments(
-    #     output_dir="/app/results",
-    #     num_train_epochs=1,
-    #     per_device_train_batch_size=1,  # Keep batch size low for memory efficiency
-    #     gradient_accumulation_steps=4,  # Adjust this to maintain effective batch size
-    #     save_strategy="no",  # Disable saving during training
-    #     logging_dir="/app/logs",
-    #     logging_steps=10,
-    #     optim="adamw_torch",
-    # )
 
-    # trainer = Trainer(
-    #     model=model,
-    #     args=training_args,
-    #     train_dataset=dataset,
-    #     tokenizer=tokenizer,
-    # )
-
-    # trainer.train()
-    # Set supervised fine-tuning parameters
     try:
         trainer = SFTTrainer(
             model=model,
@@ -271,44 +263,6 @@ def finetune_model(model, tokenizer, contract_examples):
 
     return model
 
-# Function to generate synthetic smart contract
-def generate_synthetic_contract(model, tokenizer, prompt, max_length=512):
-    print("Generating synthetic contract...")
-    device = model.device  # Get the device the model is using (GPU or CPU)
-    inputs = tokenizer(prompt, return_tensors="pt").input_ids.to(device)
-    outputs = model.generate(inputs, max_length=max_length, num_return_sequences=1)
-    synthetic_contract = tokenizer.decode(outputs[0], skip_special_tokens=True)
-    return add_pragma_and_imports(synthetic_contract)
-
-# Function to validate smart contract using py-solc-x
-def validate_contract(contract_code: str):
-    print("Validating contract...")
-    try:
-        set_solc_version('0.8.20')
-        compiled_sol = compile_source(contract_code, output_values=["abi", "bin"])
-        print("Contract validation successful.")
-        return True, None
-    except Exception as e:
-        print(f"Contract validation failed: {e}")
-        return False, str(e)
-
-# Function to categorize errors for targeted fine-tuning
-def categorize_error(error_message):
-    if "pragma" in error_message or "import" in error_message:
-        return "pragma_or_import_issue"
-    elif "primary expression" in error_message or re.search(r'!+', error_message):
-        return "syntax_noise"  # Handling invalid characters like '!'
-    return "general_error"
-
-# Function to perform basic syntactical cleaning
-def basic_syntax_check(contract_code):
-    # Allow more flexibility: only reject contracts with extreme issues like excessive repeated characters
-    if re.search(r'!{5,}', contract_code):  # Check if there are more than 5 consecutive '!'
-        return False
-    # Ensure there is no hanging multi-line comment
-    if re.search(r'/\*\*[^*]*$', contract_code):  # Incomplete comment block
-        return False
-    return True
 
 
 
