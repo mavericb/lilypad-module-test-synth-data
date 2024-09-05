@@ -1,38 +1,32 @@
-# Development Guide for a New Module
+# README: Running the Synthetic Data Generation Module
+
+This guide provides instructions for setting up, testing, and running the synthetic data generation module on Lilypad.
 
 ## Setup and Configuration
 
-### 1. Update Dockerfile
-- Download necessary files for build
-- Point to downloaded files (runtime won't have internet access)
-- Ensure all dependencies are properly installed
+### 1. Dockerfile
+- Ensure all necessary files for the build are downloaded and referenced.
+- The runtime environment won't have internet access, so all dependencies must be included.
 
-### 2. Update `main.py`
-- Add your module's core logic
-- Access input through environment variables:
+### 2. main.py
+- The core logic for synthetic data generation is implemented here.
+- Input is accessed through environment variables:
   ```python
-  input = os.environ.get("INPUT") or "default value"
+  input = os.environ.get("INPUT") or "question mark floating in space"
   ```
-- Implement error handling and logging
 
-### 3. Update `requirements.txt`
-- List all Python package dependencies
-- Specify version numbers for consistency
+### 3. requirements.txt
+- Lists all Python package dependencies for the module.
 
-### 4. Configure `config.env`
-- Set your image name and tag:
+### 4. config.env
+- Contains image details:
   ```
-  # Generic example
-  IMAGE_NAME=your-module-name
-  IMAGE_TAG=v1.0.0
-
-  # Specific example
   IMAGE_NAME=test
   IMAGE_TAG=synth-data
   ```
 
-### 5. Leave `start.sh` and `build.sh` unchanged
-- These scripts handle standard operations
+### 5. start.sh and build.sh
+- These scripts handle standard operations and should not be modified.
 
 ## Testing and Deployment
 
@@ -40,42 +34,18 @@
 
 1. Build the Docker image:
    ```bash
-   # Generic example
-   docker build --progress=plain -f Dockerfile -t your-module-name .
-
-   # Specific example
    docker build --progress=plain -f Dockerfile -t basinpoc .
    ```
 
-2. Run the container with sample parameters:
+2. Run the container:
    ```bash
-   # Generic example
-   docker run --name your-module-name \
-     -e SEED=42 \
-     -e NUM_CONTRACTS=5 \
-     -e TOKEN_STANDARD=ERC20 \
-     -e OMP_NUM_THREADS=1 \
-     -e MALLOC_ARENA_MAX=2 \
-     your-module-name
-
-   # Specific example
-   docker run --name basinpoc \
-     -e SEED=42 \
-     -e NUM_CONTRACTS=5 \
-     -e TOKEN_STANDARD=ERC20 \
-     -e OMP_NUM_THREADS=1 \
-     -e MALLOC_ARENA_MAX=2 \
-     basinpoc
+   docker run --name basinpoc -e SEED=42 -e NUM_CONTRACTS=5 -e TOKEN_STANDARD=ERC20 -e OMP_NUM_THREADS=1 -e MALLOC_ARENA_MAX=2 basinpoc
    ```
 
 ### Push to Docker Hub
 
-1. Build and push using the provided script:
+1. Build and push the image:
    ```bash
-   # Generic example
-   bash ./scripts/build.sh your-dockerhub-username your-access-token
-
-   # Specific example
    bash ./scripts/build.sh username token
    ```
 
@@ -83,22 +53,14 @@
 
 1. Run the pushed image locally without network access:
    ```bash
-   # Generic example
-   docker run your-dockerhub-username/your-module-name:tag --network none
-
-   # Specific example
    docker run mavericb/test:synth-data-v20240905193355 --network none
    ```
 
 ### Lilypad Integration
 
 1. Update the Lilypad template:
-   - Modify the `Image` field:
+   - Modify the `Image` field in your Lilypad JSON template:
      ```json
-     // Generic example
-     "Image": "your-dockerhub-username/your-module-name:tag"
-
-     // Specific example
      "Image": "mavericb/test:synth-data-v20240905193355"
      ```
 
@@ -106,10 +68,6 @@
    - Ensure local testnet is running (see below)
    - Execute the module:
      ```bash
-     # Generic example
-     ./stack run --network dev github.com/your-username/your-repo:commit-hash -i Input=test-input
-
-     # Specific example
      ./stack run --network dev github.com/mavericb/lilypad-module-test-synth-data:a15bb98a877e816497eb08bb76ccdcd0a46efeed -i Input=moo
      ```
 
@@ -117,27 +75,39 @@
 
 ### Start Local Testnet
 
-Run these commands in order:
+Run each of these commands in a separate terminal window or tab, in the order listed:
 
 ```bash
+# Terminal 1
 ./stack chain-clean
 ./stack chain
 ./stack chain-boot
+
+# Terminal 2
 ipfs daemon
+
+# Terminal 3
 ./stack solver
+
+# Terminal 4
 ./stack job-creator
+
+# Terminal 5
 rm -rf /home/lily/.bacalhau
 ./stack bacalhau-node
+
+# Terminal 6
 ./stack resource-provider --offer-gpu 1
 ```
 
+Keep all terminals open as these processes need to run concurrently for the local testnet to function properly.
+
 ### Verify Local Testnet
 
-Run these test commands:
+Once all the above processes are running, open a new terminal to run these test commands:
 
 ```bash
 ./stack run cowsay:v0.0.4 -i Message=moo
 ./stack run --network dev github.com/arsenum/GPU:main
 ./stack run --network dev github.com/mavericb/lilypad-module-test:36fc663dde73cbc536e71020537d0e1cf49b164d -i Input=moo
 ```
-
