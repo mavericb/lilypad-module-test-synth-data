@@ -31,6 +31,33 @@ def add_pragma_and_imports(synthetic_contract):
 
     return synthetic_contract
 
+# Create a custom dataset for fine-tuning
+class SolidityDataset(Dataset):
+    def __init__(self, contracts, tokenizer, max_length=512):
+        self.contracts = contracts
+        self.tokenizer = tokenizer
+        self.max_length = max_length
+
+    def __len__(self):
+        return len(self.contracts)
+
+    def __getitem__(self, idx):
+        contract = self.contracts[idx]
+        tokenized = self.tokenizer(
+            contract,
+            truncation=True,
+            padding="max_length",
+            max_length=self.max_length,
+            return_tensors="pt"
+        )
+        # Set the labels equal to the input_ids for causal language modeling
+        tokenized["labels"] = tokenized["input_ids"].clone()
+        return {
+            "input_ids": tokenized["input_ids"].squeeze(),
+            "attention_mask": tokenized["attention_mask"].squeeze(),
+            "labels": tokenized["labels"].squeeze()  # Labels for loss computation
+        }
+
 # Function to generate synthetic smart contract
 def generate_synthetic_contract(model, tokenizer, prompt, max_length=512):
     print("Generating synthetic contract...")
@@ -136,33 +163,6 @@ packing = False
 device_map = {"": 0}
 
 
-# Create a custom dataset for fine-tuning
-class SolidityDataset(Dataset):
-    def __init__(self, contracts, tokenizer, max_length=512):
-        self.contracts = contracts
-        self.tokenizer = tokenizer
-        self.max_length = max_length
-
-    def __len__(self):
-        return len(self.contracts)
-
-    def __getitem__(self, idx):
-        contract = self.contracts[idx]
-        tokenized = self.tokenizer(
-            contract,
-            truncation=True,
-            padding="max_length",
-            max_length=self.max_length,
-            return_tensors="pt"
-        )
-        # Set the labels equal to the input_ids for causal language modeling
-        tokenized["labels"] = tokenized["input_ids"].clone()
-        return {
-            "input_ids": tokenized["input_ids"].squeeze(),
-            "attention_mask": tokenized["attention_mask"].squeeze(),
-            "labels": tokenized["labels"].squeeze()  # Labels for loss computation
-        }
-
 # Load model and tokenizer
 print("Loading model and tokenizer...")
 compute_dtype = getattr(torch, bnb_4bit_compute_dtype)
@@ -217,9 +217,9 @@ training_arguments = TrainingArguments(
 
 # Load dataset from local file
 # Load the ERC-20 contract examples from the specified directory
-contract_examples = load_contract_examples(contracts_path)
-
 try:
+    print("Preparing the dataset for fine-tuning...")
+    contract_examples = load_contract_examples(contracts_path)
     dataset = SolidityDataset(contract_examples, tokenizer)
     print(f"Dataset loaded successfully from {contracts_path}")
     print(f"Dataset info: {dataset}")
@@ -231,7 +231,7 @@ except Exception as e:
 # Fine-tune the model using the loaded contracts
 def finetune_model(model, tokenizer, contract_examples):
     print("Preparing the dataset for fine-tuning...")
-    dataset = SolidityDataset(contract_examples, tokenizer)
+    #dataset = SolidityDataset(contract_examples, tokenizer)
 
     print("Starting the fine-tuning process...")
 
