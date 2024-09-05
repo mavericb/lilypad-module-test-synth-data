@@ -157,6 +157,10 @@ def generate_contracts(model, tokenizer, contract_examples, num_contracts):
         prompt = random.choice(contract_examples)[:512]
         synthetic_contract = generate_synthetic_contract(model, tokenizer, prompt)
 
+        logger.info("Generated Contract:")
+        logger.info(synthetic_contract)
+        logger.info("-" * 50)
+
         is_valid, error_message = validate_contract(synthetic_contract)
 
         if is_valid:
