@@ -4,92 +4,60 @@ import torch
 from torch.utils.data import Dataset
 from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig, Trainer, TrainingArguments
 from solcx import compile_source, install_solc, set_solc_version
-import re #OK
+import re
 
-# Install Solidity compiler  #OK
+# Install Solidity compiler
 print("Installing Solidity compiler...")
 install_solc(version="0.8.20")
 
-# Seed, number of contracts, and token standard as environment inputs #OK
+# Seed, number of contracts, and token standard as environment inputs
 seed = int(os.environ.get("SEED", 42))  # Default to 42 if SEED is not provided
 num_contracts = int(os.environ.get("NUM_CONTRACTS", 1))  # Default to 1 contract if NUM_CONTRACTS is not provided
 token_standard = os.environ.get("TOKEN_STANDARD", "ERC-20")  # Default to ERC-20 if TOKEN_STANDARD is not provided
 
 print(f"Environment Variables - SEED: {seed}, NUM_CONTRACTS: {num_contracts}, TOKEN_STANDARD: {token_standard}")
 
-# Set random seed #OK
+# Set random seed
 random.seed(seed)
 torch.manual_seed(seed)
 
-import os #OK
-import torch
-from datasets import load_from_disk
-from transformers import (
-    AutoModelForCausalLM,
-    AutoTokenizer,
-    BitsAndBytesConfig,
-    TrainingArguments,
-    pipeline,
-    logging,
-)
-from peft import LoraConfig, PeftModel
-from trl import SFTTrainer
-
-print("main.py started")
-
-input = os.environ.get("INPUT") or "question mark floating in space"
-print(f"Input: {input}")
-
 # Use local paths for model and dataset
 model_name = "/app/model"
-dataset_path = "/app/dataset"
-new_model = "llama-3-8b-synth-data" #OK
-
-# Use local paths for model and dataset
-# model_name = "/app/model"
 contracts_path = "/app/dataset/contracts"  # Directory where ERC-20 contracts are stored
 
 print(f"Using model path: {model_name}")
 print(f"Using contract path: {contracts_path}")
 
-# QLoRA parameters #OK
-lora_r = 64
-lora_alpha = 16
-lora_dropout = 0.1
-
-# bitsandbytes parameters #OK
+# bitsandbytes parameters
 use_4bit = True
 bnb_4bit_compute_dtype = "float16"
 bnb_4bit_quant_type = "nf4"
 use_nested_quant = False
 
-# TrainingArguments parameters #OK
-output_dir = "/app/results"
-num_train_epochs = 1
-fp16 = False
-bf16 = False
-per_device_train_batch_size = 4
-per_device_eval_batch_size = 4
-gradient_accumulation_steps = 1
-gradient_checkpointing = True
-max_grad_norm = 0.3
-learning_rate = 2e-4
-weight_decay = 0.001
-optim = "paged_adamw_32bit"
-lr_scheduler_type = "constant"
-max_steps = -1
-warmup_ratio = 0.03
-group_by_length = True
-save_steps = 25
-logging_steps = 25
+# Load model and tokenizer
+print("Loading model and tokenizer...")
+compute_dtype = getattr(torch, bnb_4bit_compute_dtype)
+bnb_config = BitsAndBytesConfig(
+    load_in_4bit=use_4bit,
+    bnb_4bit_quant_type=bnb_4bit_quant_type,
+    bnb_4bit_compute_dtype=compute_dtype,
+    bnb_4bit_use_double_quant=use_nested_quant,
+)
 
-# SFT parameters #OK
-max_seq_length = None
-packing = False
-device_map = {"": 0}
+model = AutoModelForCausalLM.from_pretrained(
+    model_name,
+    quantization_config=bnb_config,
+    device_map={"": 0},
+    trust_remote_code=True,
+)
+model.config.use_cache = False
 
-##
+tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True)
+tokenizer.add_special_tokens({'pad_token': '[PAD]'})
+tokenizer.pad_token = tokenizer.eos_token
+tokenizer.padding_side = "right"
 
+print("Model and tokenizer loaded successfully.")
 
 # Function to load Solidity contracts from the directory
 def load_contract_examples(path_to_contracts: str):
@@ -141,150 +109,32 @@ class SolidityDataset(Dataset):
             "labels": tokenized["labels"].squeeze()  # Labels for loss computation
         }
 
-# Load model and tokenizer
-print("Loading model and tokenizer...")
-compute_dtype = getattr(torch, bnb_4bit_compute_dtype)
-bnb_config = BitsAndBytesConfig(
-    load_in_4bit=use_4bit,
-    bnb_4bit_quant_type=bnb_4bit_quant_type,
-    bnb_4bit_compute_dtype=compute_dtype,
-    bnb_4bit_use_double_quant=use_nested_quant,
-)
-
-model = AutoModelForCausalLM.from_pretrained(
-    model_name,
-    quantization_config=bnb_config,
-    device_map={"": 0},
-    trust_remote_code=True,
-)
-model.config.use_cache = False
-
-tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True)
-tokenizer.add_special_tokens({'pad_token': '[PAD]'})
-tokenizer.pad_token = tokenizer.eos_token
-tokenizer.padding_side = "right"
-
-# Load LoRA configuration
-peft_config = LoraConfig(
-    lora_alpha=lora_alpha,
-    lora_dropout=lora_dropout,
-    r=lora_r,
-    bias="none",
-    task_type="CAUSAL_LM",
-)
-
-# Set training parameters
-training_arguments = TrainingArguments(
-    output_dir=output_dir,
-    num_train_epochs=num_train_epochs,
-    per_device_train_batch_size=per_device_train_batch_size,
-    gradient_accumulation_steps=gradient_accumulation_steps,
-    optim=optim,
-    save_steps=save_steps,
-    logging_steps=logging_steps,
-    learning_rate=learning_rate,
-    weight_decay=weight_decay,
-    fp16=fp16,
-    bf16=bf16,
-    max_grad_norm=max_grad_norm,
-    max_steps=max_steps,
-    warmup_ratio=warmup_ratio,
-    group_by_length=group_by_length,
-    lr_scheduler_type=lr_scheduler_type,
-)
-
-# Load dataset from local file
-# Load the ERC-20 contract examples from the specified directory
-contract_examples = load_contract_examples(contracts_path)
-
-try:
-    dataset = SolidityDataset(contract_examples, tokenizer)
-    print(f"Dataset loaded successfully from {dataset_path}")
-    print(f"Dataset info: {dataset}")
-except Exception as e:
-    print(f"Error loading dataset: {e}")
-    raise
-
-# HERE
-# # Load model and tokenizer
-# print("Loading model and tokenizer...")
-# compute_dtype = getattr(torch, bnb_4bit_compute_dtype)
-# bnb_config = BitsAndBytesConfig(
-#     load_in_4bit=use_4bit,
-#     bnb_4bit_quant_type=bnb_4bit_quant_type,
-#     bnb_4bit_compute_dtype=compute_dtype,
-#     bnb_4bit_use_double_quant=use_nested_quant,
-# )
-#
-# model = AutoModelForCausalLM.from_pretrained(
-#     model_name,
-#     quantization_config=bnb_config,
-#     device_map={"": 0},
-#     trust_remote_code=True,
-# )
-# model.config.use_cache = False
-#
-# tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True)
-# tokenizer.add_special_tokens({'pad_token': '[PAD]'})
-# tokenizer.pad_token = tokenizer.eos_token
-# tokenizer.padding_side = "right"
-#
-# print("Model and tokenizer loaded successfully.")
-
-# HERE
-
 # Fine-tune the model using the loaded contracts
 def finetune_model(model, tokenizer, contract_examples):
     print("Preparing the dataset for fine-tuning...")
     dataset = SolidityDataset(contract_examples, tokenizer)
 
     print("Starting the fine-tuning process...")
-    # training_args = TrainingArguments(
-    #     output_dir="/app/results",
-    #     num_train_epochs=1,
-    #     per_device_train_batch_size=1,  # Keep batch size low for memory efficiency
-    #     gradient_accumulation_steps=4,  # Adjust this to maintain effective batch size
-    #     save_strategy="no",  # Disable saving during training
-    #     logging_dir="/app/logs",
-    #     logging_steps=10,
-    #     optim="adamw_torch",
-    # )
+    training_args = TrainingArguments(
+        output_dir="/app/results",
+        num_train_epochs=1,
+        per_device_train_batch_size=1,  # Keep batch size low for memory efficiency
+        gradient_accumulation_steps=4,  # Adjust this to maintain effective batch size
+        save_strategy="no",  # Disable saving during training
+        logging_dir="/app/logs",
+        logging_steps=10,
+        optim="adamw_torch",
+    )
 
-    # trainer = Trainer(
-    #     model=model,
-    #     args=training_args,
-    #     train_dataset=dataset,
-    #     tokenizer=tokenizer,
-    # )
+    trainer = Trainer(
+        model=model,
+        args=training_args,
+        train_dataset=dataset,
+        tokenizer=tokenizer,
+    )
 
-    # trainer.train()
-    # Set supervised fine-tuning parameters
-    try:
-        trainer = SFTTrainer(
-            model=model,
-            train_dataset=dataset,
-            peft_config=peft_config,
-            dataset_text_field="text",
-            max_seq_length=max_seq_length,
-            tokenizer=tokenizer,
-            args=training_arguments,
-            packing=packing,
-        )
-        print("SFTTrainer initialized successfully")
-    except Exception as e:
-        print(f"Error initializing SFTTrainer: {e}")
-        raise
+    trainer.train()
     print("Fine-tuning completed.")
-
-    # Train model
-    try:
-        print("Starting model training...")
-        trainer.train()
-        print("Model training completed successfully")
-    except Exception as e:
-        print(f"Error during model training: {e}")
-        raise
-
     return model
 
 # Function to generate synthetic smart contract
@@ -326,7 +176,8 @@ def basic_syntax_check(contract_code):
         return False
     return True
 
-
+# Load the ERC-20 contract examples from the specified directory
+contract_examples = load_contract_examples(contracts_path)
 
 # Fine-tune the model using the contract examples
 model = finetune_model(model, tokenizer, contract_examples)
